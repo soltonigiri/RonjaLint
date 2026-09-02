@@ -1,0 +1,46 @@
+{
+  "name": "textlint-rule-ronjalint",
+  "version": "0.1.0",
+  "description": "RonjaLint: a textlint rule for validating Japanese Logical Gohou chat style.",
+  "keywords": [
+    "textlint",
+    "textlintrule",
+    "japanese",
+    "writing-style"
+  ],
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    ".agents/hooks/",
+    "lib/",
+    ".agents/skills/ronjalint/",
+    ".codex/hooks.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "npm run build && tsx --test test/index-test.ts && node --test test/hook-test.mjs",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "textlint": ">=15.8.0"
+  },
+  "dependencies": {
+    "emoji-regex": "^10.6.0",
+    "textlint-rule-helper": "^2.5.0"
+  },
+  "devDependencies": {
+    "@textlint/kernel": "^15.8.0",
+    "@textlint/textlint-plugin-markdown": "^15.8.0",
+    "@textlint/types": "^15.8.0",
+    "@types/node": "^20.19.43",
+    "textlint": "^15.8.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  }
+}

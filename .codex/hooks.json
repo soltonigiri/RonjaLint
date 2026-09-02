@@ -1,0 +1,30 @@
+{
+  "description": "Apply RonjaLint to Japanese AI chat responses.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.agents/hooks/ronjalint.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Loading RonjaLint"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.agents/hooks/ronjalint.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Checking RonjaLint"
+          }
+        ]
+      }
+    ]
+  }
+}
