@@ -87,7 +87,7 @@ test("reports mechanically detectable style violations", async () => {
         {
             text: "これは通常の敬語です。",
             messages: [
-                "文章を全角小文字の「ｗ」3個以上で終えてください。",
+                "通常の本文の各行を全角小文字の「ｗ」3個以上で終えてください。",
                 "ロジカル語法では句点を使わず、芝で文を区切ってください。"
             ]
         },
@@ -105,16 +105,12 @@ test("reports mechanically detectable style violations", async () => {
             messages: ["芝には全角小文字の「ｗ」だけを使ってください。"]
         },
         {
-            text: "疑問符の位置が逆ですかなｗｗｗ？",
+            text: "途中の質問だけ通常ですか？結論はこちらですなｗｗｗ",
             messages: ["疑問符と感嘆符は芝の前に置いてください。"]
         },
         {
-            text: "途中の質問だけ通常ですか？結論はこちらですなｗｗｗ",
-            messages: ["疑問符と感嘆符の直後には芝を置いてください。"]
-        },
-        {
             text: "途中の感嘆文だけ通常です！結論はこちらですぞｗｗｗ",
-            messages: ["疑問符と感嘆符の直後には芝を置いてください。"]
+            messages: ["疑問符と感嘆符は芝の前に置いてください。"]
         },
         {
             text: "途中に通常文があります。結論はこちらですなｗｗｗ",
@@ -156,6 +152,107 @@ test("does not treat a plain URL as grass", async () => {
     );
 });
 
+test("places punctuation before grass by default", async () => {
+    assert.deepEqual(await lintMessages("いかがですかな？ｗｗｗ"), []);
+    assert.deepEqual(
+        await lintMessages("いかがですかなｗｗｗ？"),
+        ["疑問符と感嘆符は芝の前に置いてください。"]
+    );
+});
+
+test("can allow punctuation on either side of grass", async () => {
+    assert.deepEqual(
+        await lintMessages("いかがですかな？ｗｗｗ", {
+            punctuationPosition: "either"
+        }),
+        []
+    );
+    assert.deepEqual(
+        await lintMessages("いかがですかなｗｗｗ？", {
+            punctuationPosition: "either"
+        }),
+        []
+    );
+    assert.deepEqual(
+        await lintMessages("いかがですかな？ ｗｗｗ", {
+            punctuationPosition: "either",
+            requireLogicalEnding: false
+        }),
+        ["疑問符と感嘆符は芝の直前または直後に置いてください。"]
+    );
+    assert.deepEqual(
+        await lintMessages("いかがですかなｗｗｗ ？", {
+            punctuationPosition: "either",
+            requireLogicalEnding: false
+        }),
+        ["疑問符と感嘆符は芝の直前または直後に置いてください。"]
+    );
+});
+
+test("can restrict punctuation placement", async () => {
+    assert.deepEqual(
+        await lintMessages("いかがですかなｗｗｗ？", {
+            punctuationPosition: "before"
+        }),
+        ["疑問符と感嘆符は芝の前に置いてください。"]
+    );
+    assert.deepEqual(
+        await lintMessages("いかがですかな？ｗｗｗ", {
+            punctuationPosition: "after"
+        }),
+        ["疑問符と感嘆符は芝の後に置いてください。"]
+    );
+});
+
+test("accepts representative Logical Gohou construction families", async () => {
+    const text = [
+        "んんｗｗｗ",
+        "ぺゃっｗｗｗ 未検証で断定とはありえないｗｗｗ",
+        "この設計は役割を持てますぞｗｗｗ",
+        "未確認のまま断定するのはありえないｗｗｗ",
+        "この不備は3秒でわかることだｗｗｗ",
+        "総合的にロジックして、検証を続ける以外ありえないｗｗｗ",
+        "検証完了ｗｗｗ"
+    ].join("\n");
+
+    assert.deepEqual(await lintMessages(text), []);
+    assert.deepEqual(await lintMessages("根拠のない断定は役割を持てないゴミ"), []);
+});
+
+test("accepts repeated basic endings used in the original style", async () => {
+    const text = [
+        "差分を確認しましたなｗｗｗ",
+        "テストも通りましたなｗｗｗ",
+        "公開準備は整っていますなｗｗｗ",
+        "現在の構成で問題ありませんぞｗｗｗ"
+    ].join("\n");
+
+    assert.deepEqual(await lintMessages(text), []);
+});
+
+test("requires every line in a prose paragraph to end logically", async () => {
+    assert.deepEqual(await lintMessages("これは通常の説明文\n結論ですぞｗｗｗ"), [
+        "通常の本文の各行を全角小文字の「ｗ」3個以上で終えてください。"
+    ]);
+});
+
+test("does not require logical endings in Markdown structure or ignored content", async () => {
+    const text = [
+        "## 私は通常の見出しです。🙂www",
+        "",
+        "- 状態: 完了",
+        "- `npm test`",
+        "",
+        "> 引用文です。",
+        "",
+        "[私は通常のリンクです。🙂www](https://example.com)",
+        "",
+        "この `true` は有効ですぞｗｗｗ"
+    ].join("\n");
+
+    assert.deepEqual(await lintMessages(text), []);
+});
+
 test("allows disabling only the final-grass requirement", async () => {
     assert.deepEqual(
         await lintMessages("途中に句点があります。", {
@@ -170,13 +267,19 @@ test("keeps acceptedEndings as an optional strict restriction", async () => {
         await lintMessages("自由な語尾ですなｗｗｗ", {
             acceptedEndings: ["ですぞ"]
         }),
-        ["文章を指定されたロジカル語尾と3個以上の芝で終えてください。"]
+        ["通常の本文を指定されたロジカル語尾と3個以上の芝で終えてください。"]
     );
     assert.deepEqual(
         await lintMessages("指定された語尾ですぞｗｗｗ", {
             acceptedEndings: ["ですぞ"]
         }),
         []
+    );
+    assert.deepEqual(
+        await lintMessages("根拠のない断定は役割を持てないゴミ", {
+            acceptedEndings: ["ですぞ"]
+        }),
+        ["通常の本文を指定されたロジカル語尾と3個以上の芝で終えてください。"]
     );
 });
 
@@ -208,6 +311,12 @@ test("rejects invalid options", async () => {
         } as unknown as Options),
         /checkPronouns must be a boolean/u
     );
+    await assert.rejects(
+        lintMessages("確認しますぞｗｗｗ", {
+            punctuationPosition: "sideways"
+        } as unknown as Options),
+        /punctuationPosition must be one of: before, after, either/u
+    );
 });
 
 test("keeps the distributed examples in sync with the rule", async () => {
@@ -224,7 +333,7 @@ test("keeps the distributed examples in sync with the rule", async () => {
         "芝には全角小文字の「ｗ」だけを使ってください。",
         "ロジカル語法では句点を使わず、芝で文を区切ってください。",
         "疑問符と感嘆符は芝の前に置いてください。",
-        "疑問符と感嘆符の直後には芝を置いてください。"
+        "疑問符と感嘆符は芝の前に置いてください。"
     ];
     assert.deepEqual(invalidMessages.toSorted(), expectedMessages.toSorted());
 });

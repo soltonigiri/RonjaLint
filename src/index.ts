@@ -5,12 +5,14 @@ import { RuleHelper } from "textlint-rule-helper";
 export interface Options {
     /** Minimum number of consecutive full-width lowercase grass characters. */
     minGrass?: number;
-    /** Require visible prose to end with a valid grass run. */
+    /** Require each line of ordinary prose to end with a valid grass run. */
     requireLogicalEnding?: boolean;
-    /** Optionally restrict the suffix immediately before the final grass run. */
+    /** Optionally restrict the suffix immediately before each required grass run. */
     acceptedEndings?: string[];
     /** Report clear first- and second-person pronouns outside Logical Gohou. */
     checkPronouns?: boolean;
+    /** Restrict question and exclamation marks to before grass, after grass, or either side. */
+    punctuationPosition?: "before" | "after" | "either";
 }
 
 const grassRunPattern = /[wWＷｗ]+/gu;
@@ -18,6 +20,12 @@ const japaneseCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Ka
 const firstPersonPattern = /(?:私|僕|俺)(?=(?:自身|たち|達|ら)?(?:は|が|の|も|を|に|なら|として|です|でした|だ|で|、|,|\s|$))/gu;
 const secondPersonPattern = /(?:あなた|貴方|お前)(?=(?:自身|たち|達|ら)?(?:は|が|の|も|を|に|なら|として|です|でした|だ|で|、|,|\s|$))/gu;
 const trailingClosingDelimiterPattern = /[」』）)】〉》〕］｝\]]+$/u;
+
+interface VisiblePart {
+    end: number;
+    start: number;
+    text: string;
+}
 
 const isGrassLike = (text: string, index: number, value: string): boolean => {
     if (/[Ｗｗ]/u.test(value)) {
@@ -54,6 +62,40 @@ const stripTrailingClosingDelimiters = (text: string): string => {
     return result;
 };
 
+const punctuationMessage = (position: "before" | "after" | "either"): string => {
+    if (position === "before") {
+        return "疑問符と感嘆符は芝の前に置いてください。";
+    }
+    if (position === "after") {
+        return "疑問符と感嘆符は芝の後に置いてください。";
+    }
+    return "疑問符と感嘆符は芝の直前または直後に置いてください。";
+};
+
+const reconstructVisibleParagraph = (
+    paragraphSource: string,
+    paragraphStart: number,
+    parts: VisiblePart[]
+): string => {
+    let cursor = 0;
+    let visibleText = "";
+
+    for (const part of [...parts].sort((left, right) => left.start - right.start)) {
+        const localStart = part.start - paragraphStart;
+        const localEnd = part.end - paragraphStart;
+        if (localStart < cursor) {
+            continue;
+        }
+
+        visibleText += paragraphSource.slice(cursor, localStart).replace(/[^\r\n]/g, " ");
+        visibleText += part.text;
+        cursor = localEnd;
+    }
+
+    visibleText += paragraphSource.slice(cursor).replace(/[^\r\n]/g, " ");
+    return visibleText;
+};
+
 const report: TextlintRuleModule<Options> = (context, options = {}) => {
     const { Syntax, RuleError, report, getSource, locator } = context;
     const helper = new RuleHelper(context);
@@ -61,7 +103,8 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
     const requireLogicalEnding = options.requireLogicalEnding ?? true;
     const acceptedEndings = options.acceptedEndings;
     const checkPronouns = options.checkPronouns ?? true;
-    const visibleTexts: string[] = [];
+    const punctuationPosition = options.punctuationPosition ?? "before";
+    const paragraphParts = new Map<number, VisiblePart[]>();
 
     if (!Number.isInteger(minGrass) || minGrass < 1) {
         throw new Error("minGrass must be an integer greater than or equal to 1.");
@@ -71,6 +114,9 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
     }
     if (typeof checkPronouns !== "boolean") {
         throw new Error("checkPronouns must be a boolean.");
+    }
+    if (!["before", "after", "either"].includes(punctuationPosition)) {
+        throw new Error("punctuationPosition must be one of: before, after, either.");
     }
     if (
         acceptedEndings !== undefined &&
@@ -87,7 +133,8 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
         Syntax.LinkReference,
         Syntax.Image,
         Syntax.ImageReference,
-        Syntax.Code
+        Syntax.Code,
+        Syntax.Header
     ];
 
     return {
@@ -97,7 +144,16 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
             }
 
             const text = getSource(node);
-            visibleTexts.push(text);
+            const paragraph = helper.getParents(node).find((parent) => parent.type === Syntax.Paragraph);
+            if (paragraph !== undefined) {
+                const parts = paragraphParts.get(paragraph.range[0]) ?? [];
+                parts.push({
+                    end: node.range[1],
+                    start: node.range[0],
+                    text
+                });
+                paragraphParts.set(paragraph.range[0], parts);
+            }
 
             for (const match of text.matchAll(grassRunPattern)) {
                 const index = match.index ?? 0;
@@ -148,41 +204,36 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                 );
             }
 
-            for (const match of text.matchAll(/[wWＷｗ]+[ \t]*[!?！？]+/gu)) {
-                const index = match.index ?? 0;
-                const grass = match[0].match(/^[wWＷｗ]+/u)?.[0] ?? "";
-                if (!isGrassLike(text, index, grass)) {
-                    continue;
-                }
-                const punctuationIndex = index + match[0].search(/[!?！？]/u);
-                report(
-                    node,
-                    new RuleError("疑問符と感嘆符は芝の前に置いてください。", {
-                        padding: locator.range([punctuationIndex, index + match[0].length])
-                    })
-                );
-            }
-
             for (const match of text.matchAll(/[!?！？]+/gu)) {
                 const index = match.index ?? 0;
                 const before = text.slice(0, index);
-                if (/[wWＷｗ]+[ \t]*$/u.test(before)) {
-                    continue;
+                const precedingGrassMatch = before.match(/([wWＷｗ]+)$/u);
+                let hasPrecedingGrass = false;
+                if (precedingGrassMatch !== null) {
+                    const grass = precedingGrassMatch[1];
+                    const grassIndex = before.length - precedingGrassMatch[0].length;
+                    hasPrecedingGrass = isGrassLike(text, grassIndex, grass);
                 }
 
                 const after = text.slice(index + match[0].length);
-                const followingGrass = after.match(/^[ \t]*([wWＷｗ]+)/u);
+                const followingGrass = after.match(/^([wWＷｗ]+)/u);
+                let hasFollowingGrass = false;
                 if (followingGrass !== null) {
                     const grass = followingGrass[1];
                     const grassIndex = index + match[0].length + followingGrass[0].indexOf(grass);
-                    if (isGrassLike(text, grassIndex, grass)) {
-                        continue;
-                    }
+                    hasFollowingGrass = isGrassLike(text, grassIndex, grass);
+                }
+
+                const isAllowed =
+                    (punctuationPosition !== "before" && hasPrecedingGrass) ||
+                    (punctuationPosition !== "after" && hasFollowingGrass);
+                if (isAllowed) {
+                    continue;
                 }
 
                 report(
                     node,
-                    new RuleError("疑問符と感嘆符の直後には芝を置いてください。", {
+                    new RuleError(punctuationMessage(punctuationPosition), {
                         padding: locator.range([index, index + match[0].length])
                     })
                 );
@@ -219,34 +270,76 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                 }
             }
         },
-        [`${Syntax.Document}:exit`](node) {
-            if (!requireLogicalEnding || visibleTexts.length === 0) {
+        [`${Syntax.Paragraph}:exit`](node) {
+            if (!requireLogicalEnding || helper.isChildNode(node, [Syntax.BlockQuote, Syntax.ListItem])) {
                 return;
             }
 
-            const visibleText = stripTrailingClosingDelimiters(
-                visibleTexts.join("").replace(emojiRegex(), "").trim()
+            const parts = paragraphParts.get(node.range[0]) ?? [];
+            const visibleParagraph = reconstructVisibleParagraph(
+                getSource(node),
+                node.range[0],
+                parts
             );
-            if (visibleText.length === 0) {
-                return;
-            }
+            const endingLikePattern = new RegExp(
+                `(?:[!?！？]+[wWＷｗ]+|[wWＷｗ]+(?:[。．.!！?？]+)?)$`,
+                "u"
+            );
+            const beforePattern = new RegExp(`(?:[!?！？]+)?ｗ{${minGrass},}$`, "u");
+            const afterPattern = new RegExp(`ｗ{${minGrass},}(?:[!?！？]+)?$`, "u");
+            const linePattern = /[^\r\n]+/gu;
 
-            const endingLikePattern = new RegExp(`[wWＷｗ]+(?:[。．.!！?？])?$`, "u");
-            const validGrassPattern = new RegExp(`ｗ{${minGrass},}$`, "u");
-            if (!validGrassPattern.test(visibleText)) {
-                if (!endingLikePattern.test(visibleText)) {
-                    report(node, new RuleError(`文章を全角小文字の「ｗ」${minGrass}個以上で終えてください。`));
+            for (const lineMatch of visibleParagraph.matchAll(linePattern)) {
+                const rawLine = lineMatch[0];
+                const visibleLine = stripTrailingClosingDelimiters(
+                    rawLine.replace(emojiRegex(), "").trim()
+                );
+                if (visibleLine.length === 0) {
+                    continue;
                 }
-                return;
-            }
 
-            if (acceptedEndings !== undefined) {
-                const withoutGrass = visibleText.replace(new RegExp(`ｗ{${minGrass},}$`, "u"), "").trimEnd();
-                const endingStem = withoutGrass.replace(/[!?！？]+$/u, "").trimEnd();
+                if (/ゴミ$/u.test(visibleLine)) {
+                    if (acceptedEndings !== undefined) {
+                        report(
+                            node,
+                            new RuleError(
+                                `通常の本文を指定されたロジカル語尾と${minGrass}個以上の芝で終えてください。`
+                            )
+                        );
+                    }
+                    continue;
+                }
+
+                const hasValidEnding =
+                    (punctuationPosition !== "after" && beforePattern.test(visibleLine)) ||
+                    (punctuationPosition !== "before" && afterPattern.test(visibleLine));
+                if (!hasValidEnding) {
+                    if (!endingLikePattern.test(visibleLine)) {
+                        report(
+                            node,
+                            new RuleError(
+                                `通常の本文の各行を全角小文字の「ｗ」${minGrass}個以上で終えてください。`
+                            )
+                        );
+                    }
+                    continue;
+                }
+
+                if (acceptedEndings === undefined) {
+                    continue;
+                }
+
+                const endingStem = visibleLine
+                    .replace(/[!?！？]+$/u, "")
+                    .replace(new RegExp(`ｗ{${minGrass},}$`, "u"), "")
+                    .replace(/[!?！？]+$/u, "")
+                    .trimEnd();
                 if (!acceptedEndings.some((ending) => endingStem.endsWith(ending))) {
                     report(
                         node,
-                        new RuleError(`文章を指定されたロジカル語尾と${minGrass}個以上の芝で終えてください。`)
+                        new RuleError(
+                            `通常の本文を指定されたロジカル語尾と${minGrass}個以上の芝で終えてください。`
+                        )
                     );
                 }
             }
