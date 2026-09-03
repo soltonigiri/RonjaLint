@@ -14,5 +14,8 @@ coverage/
 .idea/
 .vscode/
 
-# Research material is local-only.
+# Local research, design, and evaluation material.
 reference/
+corpus/
+docs/
+eval/

@@ -1,21 +1,22 @@
 # RonjaLint
 
-AIの日本語チャットを、いわゆる「役割論理」のロジカル語法にそろえる非公式のtextlintルールです。
+RonjaLintは、いわゆる「役割論理」のロジカル語法をAIの日本語チャットに取り入れるツールです。textlintルールのほか、AIエージェント向けのSkill・Hooksも入っています。
 
 ## Before / After
 
 | Before | After |
 | --- | --- |
-| `私はこの設定が妥当だと思います。🙂` | `我はこの設定が妥当だと考えますなｗｗｗ` |
-| `これでいいですか？` | `これでよいですかな？ｗｗｗ` |
-| `未検証のまま採用してはいけません。` | `未検証のまま採用するのはありえないｗｗｗ` |
-| `確認しましたなww` | `確認しましたなｗｗｗ` |
+| `この方針で進めてもよいですか？` | `この方針で進めてもよいですかな？ｗｗｗ` |
+| `未検証のまま変更を取り込んではいけません。` | `未検証のまま変更を取り込むのはありえないｗｗｗ` |
+| `比較した結果、互換性を保つ案を採用します。` | `総合的にロジックして、互換性を保つ案以外ありえないｗｗｗ` |
 
-## Usage
+## インストール
 
 ```bash
 npm install --save-dev textlint github:soltonigiri/RonjaLint
 ```
+
+`.textlintrc.json`:
 
 ```json
 {
@@ -29,42 +30,73 @@ npm install --save-dev textlint github:soltonigiri/RonjaLint
 npx textlint reply.md
 ```
 
-## Rules
+## 検査内容
 
-| 項目 | ルール |
+既定の`ronja-chat`では、芝は全角小文字の`ｗ`を3個以上続けます。本文は芝で終え、句点と絵文字は使いません。疑問符や感嘆符は芝の前に置き、自分は`我`、相手は`貴殿`と表します。
+
+段落と明示的な改行ごとに検査し、箇条書きでも文章になっている項目は対象にします。見出しなどMarkdownの構造には触れません。コードや引用は検査せず、`状態: 完了`のようなラベルも文章として扱いません。
+
+<details>
+<summary>プロファイルと設定項目</summary>
+
+### プロファイル
+
+| プロファイル | 用途 |
 | --- | --- |
-| 芝 | 全角小文字の`ｗ`を3個以上続ける |
-| 文末 | 通常の本文の各行を有効な芝で終える。`ゴミ`で終わる形は例外 |
-| 記号 | 句点を使わず、疑問符・感嘆符は芝の前に使う |
-| 人称 | 一人称には`我`、二人称には`貴殿`を使う |
-| 絵文字 | 使用しない |
+| `ronja-chat` | AIチャット用の既定設定 |
+| `canonical-current` | 現在の本家に近い表記 |
+| `custom` | 個別設定用 |
 
-見出し、コード、リンク、画像、引用ブロックは検査対象外です。箇条書きは文末検査から除外します。
+```json
+{
+  "rules": {
+    "ronjalint": {
+      "profile": "canonical-current"
+    }
+  }
+}
+```
 
-## Options
+### 設定項目
 
 | オプション | 既定値 | 用途 |
 | --- | --- | --- |
+| `profile` | `ronja-chat` | 検査プロファイル |
 | `minGrass` | `3` | 芝の最小文字数 |
-| `requireLogicalEnding` | `true` | 通常の本文の各行に文末の芝を必須にする |
+| `requireLogicalEnding` | `true` | 本文の各発話を芝で終える |
 | `checkPronouns` | `true` | 人称を検査する |
-| `punctuationPosition` | `before` | 疑問符・感嘆符を置く側を`before`、`after`、`either`から選ぶ |
+| `punctuationPosition` | プロファイル依存 | 疑問符・感嘆符の位置を`before`、`after`、`either`から選ぶ |
+| `checkEmoji` | プロファイル依存 | 絵文字を検査する |
+| `protectInlineQuotes` | `true` | インライン引用を検査対象から外す |
+| `allowBareGomiEnding` | `false` | 芝を付けない`ゴミ`を許可する |
 | `acceptedEndings` | なし | 芝の直前に置く語句を限定する |
 
-## AI agents
+`canonical-current`と`ronja-chat`では、`minGrass`を3未満にできません。
 
-このリポジトリには、文意に合うロジカル語法をAIエージェントへ指定するSkillとHooksも同梱しています。必要なときだけ使うならSkill、常に適用するならHooksを使います。
+</details>
 
-| 使い方 | ファイル | 動作 |
-| --- | --- | --- |
-| Skill | [`.agents/skills/ronjalint/`](.agents/skills/ronjalint/) | `$ronjalint`で呼び出す |
-| Hooks | [`.agents/hooks/ronjalint.mjs`](.agents/hooks/ronjalint.mjs) | セッション開始時に語法を指定し、回答時に検査する |
+## AIエージェント
 
-Hooksの起動設定は[`.codex/hooks.json`](.codex/hooks.json)です。初回は`/hooks`で内容を確認し、信頼すると有効になります。
+必要なときだけ呼び出すならSkill、すべての回答に適用するならHooksを使います。HooksにはSkillも含まれます。
 
-Hooksによる検査は`npm ci`の実行後に動作します。
+```bash
+# 任意のときに使う
+npx ronjalint-agent --skill
 
-## Development
+# 常に適用する
+npx ronjalint-agent --hooks
+```
+
+`--target`でインストール先を指定できます。既存のRonjaLintを更新するときは`--force`を付けます。
+
+```bash
+npx ronjalint-agent --hooks --target /path/to/project
+npx ronjalint-agent --hooks --force
+```
+
+既存の`.codex/hooks.json`は残したまま、RonjaLintの設定を追加します。回答の検査には、インストール先の`textlint`とRonjaLintを使います。
+
+## 開発
 
 ```bash
 npm ci

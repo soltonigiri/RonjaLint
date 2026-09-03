@@ -1,25 +1,40 @@
 import type { TextlintRuleModule } from "@textlint/types";
 import emojiRegex from "emoji-regex";
 import { RuleHelper } from "textlint-rule-helper";
+import { PROFILE_DEFAULTS, type RonjaProfileName } from "./generated-profile";
+
+export type { RonjaProfileName } from "./generated-profile";
+
+type PunctuationPosition = "before" | "after" | "either";
 
 export interface Options {
+    /** Select the current source-based rules, Ronja chat policy, or unrestricted customization. */
+    profile?: RonjaProfileName;
     /** Minimum number of consecutive full-width lowercase grass characters. */
     minGrass?: number;
-    /** Require each line of ordinary prose to end with a valid grass run. */
+    /** Require each ordinary utterance to end with a valid grass run. */
     requireLogicalEnding?: boolean;
     /** Optionally restrict the suffix immediately before each required grass run. */
     acceptedEndings?: string[];
     /** Report clear first- and second-person pronouns outside Logical Gohou. */
     checkPronouns?: boolean;
     /** Restrict question and exclamation marks to before grass, after grass, or either side. */
-    punctuationPosition?: "before" | "after" | "either";
+    punctuationPosition?: PunctuationPosition;
+    /** Report emoji. Enabled by the Ronja chat profile, not by the canonical profile. */
+    checkEmoji?: boolean;
+    /** Protect paired inline quotations from style checks. */
+    protectInlineQuotes?: boolean;
+    /** Permit the contextual bare-gomi ending. Its semantic appropriateness is not validated. */
+    allowBareGomiEnding?: boolean;
 }
 
 const grassRunPattern = /[wWＷｗ]+/gu;
 const japaneseCharacterPattern = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const firstPersonPattern = /(?:私|僕|俺)(?=(?:自身|たち|達|ら)?(?:は|が|の|も|を|に|なら|として|です|でした|だ|で|、|,|\s|$))/gu;
 const secondPersonPattern = /(?:あなた|貴方|お前)(?=(?:自身|たち|達|ら)?(?:は|が|の|も|を|に|なら|として|です|でした|だ|で|、|,|\s|$))/gu;
-const trailingClosingDelimiterPattern = /[」』）)】〉》〕］｝\]]+$/u;
+const trailingClosingDelimiterPattern = /[」』”）)】〉》〕］｝\]]+$/u;
+const compactListLabelPattern = /^[^。．.!！?？\r\n]{1,40}[：:](?:\s*\S{1,30})?$/u;
+const profileNames = Object.keys(PROFILE_DEFAULTS) as RonjaProfileName[];
 
 interface VisiblePart {
     end: number;
@@ -54,6 +69,63 @@ const isAsciiSentencePeriod = (text: string, index: number): boolean => {
     return /[wWＷｗ]/u.test(previous) || japaneseCharacterPattern.test(previous);
 };
 
+const maskRange = (text: string, start: number, end: number): string =>
+    `${text.slice(0, start)}${" ".repeat(end - start)}${text.slice(end)}`;
+
+const maskPairedQuotes = (text: string): string => {
+    const openToClose = new Map([
+        ["「", "」"],
+        ["『", "』"],
+        ["“", "”"]
+    ]);
+    const stack: Array<{ close: string; start: number }> = [];
+    const ranges: Array<{ end: number; start: number }> = [];
+
+    for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        const current = stack.at(-1);
+
+        if (character === '"' && text[index - 1] !== "\\") {
+            if (current?.close === '"') {
+                ranges.push({ start: current.start, end: index + 1 });
+                stack.pop();
+            } else {
+                stack.push({ close: '"', start: index });
+            }
+            continue;
+        }
+
+        const close = openToClose.get(character);
+        if (close !== undefined) {
+            stack.push({ close, start: index });
+            continue;
+        }
+
+        if (current?.close === character) {
+            ranges.push({ start: current.start, end: index + 1 });
+            stack.pop();
+        }
+    }
+
+    return [...ranges]
+        .sort((left, right) => right.start - left.start)
+        .reduce((masked, range) => maskRange(masked, range.start, range.end), text);
+};
+
+const maskPlainUrls = (text: string): string => {
+    const ranges = [...text.matchAll(/https?:\/\/[^\s<>"'）】」』]+/gu)].map((match) => ({
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length
+    }));
+
+    return [...ranges]
+        .sort((left, right) => right.start - left.start)
+        .reduce((masked, range) => maskRange(masked, range.start, range.end), text);
+};
+
+const maskExcludedInlineText = (text: string, protectInlineQuotes: boolean): string =>
+    maskPlainUrls(protectInlineQuotes ? maskPairedQuotes(text) : text);
+
 const stripTrailingClosingDelimiters = (text: string): string => {
     let result = text.trimEnd();
     while (trailingClosingDelimiterPattern.test(result)) {
@@ -62,7 +134,7 @@ const stripTrailingClosingDelimiters = (text: string): string => {
     return result;
 };
 
-const punctuationMessage = (position: "before" | "after" | "either"): string => {
+const punctuationMessage = (position: PunctuationPosition): string => {
     if (position === "before") {
         return "疑問符と感嘆符は芝の前に置いてください。";
     }
@@ -87,33 +159,62 @@ const reconstructVisibleParagraph = (
             continue;
         }
 
-        visibleText += paragraphSource.slice(cursor, localStart).replace(/[^\r\n]/g, " ");
+        visibleText += paragraphSource.slice(cursor, localStart).replace(/[^\r\n]/gu, " ");
         visibleText += part.text;
         cursor = localEnd;
     }
 
-    visibleText += paragraphSource.slice(cursor).replace(/[^\r\n]/g, " ");
+    visibleText += paragraphSource.slice(cursor).replace(/[^\r\n]/gu, " ");
     return visibleText;
 };
+
+const splitExplicitUtterances = (visibleParagraph: string): string[] =>
+    visibleParagraph
+        .replace(/\r\n?/gu, "\n")
+        .split(/(?: {2,}|\\)\n/gu)
+        .map((utterance) => utterance.replace(/\n/gu, " "));
 
 const report: TextlintRuleModule<Options> = (context, options = {}) => {
     const { Syntax, RuleError, report, getSource, locator } = context;
     const helper = new RuleHelper(context);
-    const minGrass = options.minGrass ?? 3;
-    const requireLogicalEnding = options.requireLogicalEnding ?? true;
+    const requestedProfile = options.profile ?? "ronja-chat";
+
+    if (!profileNames.includes(requestedProfile as RonjaProfileName)) {
+        throw new Error("profile must be one of: ronja-chat, canonical-current, custom.");
+    }
+
+    const profile = requestedProfile as RonjaProfileName;
+    const defaults = PROFILE_DEFAULTS[profile];
+    const minGrass = options.minGrass ?? defaults.minGrass;
+    const requireLogicalEnding = options.requireLogicalEnding ?? defaults.requireLogicalEnding;
     const acceptedEndings = options.acceptedEndings;
-    const checkPronouns = options.checkPronouns ?? true;
-    const punctuationPosition = options.punctuationPosition ?? "before";
+    const checkPronouns = options.checkPronouns ?? defaults.checkPronouns;
+    const punctuationPosition = options.punctuationPosition ?? defaults.punctuationPosition;
+    const checkEmoji = options.checkEmoji ?? defaults.checkEmoji;
+    const protectInlineQuotes = options.protectInlineQuotes ?? defaults.protectInlineQuotes;
+    const allowBareGomiEnding = options.allowBareGomiEnding ?? defaults.allowBareGomiEnding;
     const paragraphParts = new Map<number, VisiblePart[]>();
 
     if (!Number.isInteger(minGrass) || minGrass < 1) {
         throw new Error("minGrass must be an integer greater than or equal to 1.");
+    }
+    if (minGrass < defaults.canonicalGrassFloor) {
+        throw new Error(`minGrass must be at least ${defaults.canonicalGrassFloor} for the ${profile} profile.`);
     }
     if (typeof requireLogicalEnding !== "boolean") {
         throw new Error("requireLogicalEnding must be a boolean.");
     }
     if (typeof checkPronouns !== "boolean") {
         throw new Error("checkPronouns must be a boolean.");
+    }
+    if (typeof checkEmoji !== "boolean") {
+        throw new Error("checkEmoji must be a boolean.");
+    }
+    if (typeof protectInlineQuotes !== "boolean") {
+        throw new Error("protectInlineQuotes must be a boolean.");
+    }
+    if (typeof allowBareGomiEnding !== "boolean") {
+        throw new Error("allowBareGomiEnding must be a boolean.");
     }
     if (!["before", "after", "either"].includes(punctuationPosition)) {
         throw new Error("punctuationPosition must be one of: before, after, either.");
@@ -143,9 +244,16 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                 return;
             }
 
-            const text = getSource(node);
+            const sourceText = getSource(node);
             const paragraph = helper.getParents(node).find((parent) => parent.type === Syntax.Paragraph);
+            let text = maskExcludedInlineText(sourceText, protectInlineQuotes);
+
             if (paragraph !== undefined) {
+                const paragraphSource = getSource(paragraph);
+                const maskedParagraph = maskExcludedInlineText(paragraphSource, protectInlineQuotes);
+                const localStart = node.range[0] - paragraph.range[0];
+                text = maskedParagraph.slice(localStart, localStart + sourceText.length);
+
                 const parts = paragraphParts.get(paragraph.range[0]) ?? [];
                 parts.push({
                     end: node.range[1],
@@ -239,14 +347,16 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                 );
             }
 
-            for (const match of text.matchAll(emojiRegex())) {
-                const index = match.index ?? 0;
-                report(
-                    node,
-                    new RuleError("純粋なロジカル語法では絵文字を使用しません。", {
-                        padding: locator.range([index, index + match[0].length])
-                    })
-                );
+            if (checkEmoji) {
+                for (const match of text.matchAll(emojiRegex())) {
+                    const index = match.index ?? 0;
+                    report(
+                        node,
+                        new RuleError("Ronjaチャットでは絵文字を使用しません。", {
+                            padding: locator.range([index, index + match[0].length])
+                        })
+                    );
+                }
             }
 
             if (checkPronouns) {
@@ -271,7 +381,7 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
             }
         },
         [`${Syntax.Paragraph}:exit`](node) {
-            if (!requireLogicalEnding || helper.isChildNode(node, [Syntax.BlockQuote, Syntax.ListItem])) {
+            if (!requireLogicalEnding || helper.isChildNode(node, [Syntax.BlockQuote])) {
                 return;
             }
 
@@ -287,18 +397,20 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
             );
             const beforePattern = new RegExp(`(?:[!?！？]+)?ｗ{${minGrass},}$`, "u");
             const afterPattern = new RegExp(`ｗ{${minGrass},}(?:[!?！？]+)?$`, "u");
-            const linePattern = /[^\r\n]+/gu;
+            const isListItem = helper.isChildNode(node, [Syntax.ListItem]);
 
-            for (const lineMatch of visibleParagraph.matchAll(linePattern)) {
-                const rawLine = lineMatch[0];
-                const visibleLine = stripTrailingClosingDelimiters(
-                    rawLine.replace(emojiRegex(), "").trim()
+            for (const rawUtterance of splitExplicitUtterances(visibleParagraph)) {
+                const visibleUtterance = stripTrailingClosingDelimiters(
+                    rawUtterance.replace(emojiRegex(), "").trim()
                 );
-                if (visibleLine.length === 0) {
+                if (visibleUtterance.length === 0) {
+                    continue;
+                }
+                if (isListItem && compactListLabelPattern.test(visibleUtterance)) {
                     continue;
                 }
 
-                if (/ゴミ$/u.test(visibleLine)) {
+                if (allowBareGomiEnding && /ゴミ$/u.test(visibleUtterance)) {
                     if (acceptedEndings !== undefined) {
                         report(
                             node,
@@ -311,14 +423,14 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                 }
 
                 const hasValidEnding =
-                    (punctuationPosition !== "after" && beforePattern.test(visibleLine)) ||
-                    (punctuationPosition !== "before" && afterPattern.test(visibleLine));
+                    (punctuationPosition !== "after" && beforePattern.test(visibleUtterance)) ||
+                    (punctuationPosition !== "before" && afterPattern.test(visibleUtterance));
                 if (!hasValidEnding) {
-                    if (!endingLikePattern.test(visibleLine)) {
+                    if (!endingLikePattern.test(visibleUtterance)) {
                         report(
                             node,
                             new RuleError(
-                                `通常の本文の各行を全角小文字の「ｗ」${minGrass}個以上で終えてください。`
+                                `通常の本文の各発話を全角小文字の「ｗ」${minGrass}個以上で終えてください。`
                             )
                         );
                     }
@@ -329,7 +441,7 @@ const report: TextlintRuleModule<Options> = (context, options = {}) => {
                     continue;
                 }
 
-                const endingStem = visibleLine
+                const endingStem = visibleUtterance
                     .replace(/[!?！？]+$/u, "")
                     .replace(new RegExp(`ｗ{${minGrass},}$`, "u"), "")
                     .replace(/[!?！？]+$/u, "")

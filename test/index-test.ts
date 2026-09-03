@@ -87,13 +87,13 @@ test("reports mechanically detectable style violations", async () => {
         {
             text: "これは通常の敬語です。",
             messages: [
-                "通常の本文の各行を全角小文字の「ｗ」3個以上で終えてください。",
+                "通常の本文の各発話を全角小文字の「ｗ」3個以上で終えてください。",
                 "ロジカル語法では句点を使わず、芝で文を区切ってください。"
             ]
         },
         {
             text: "絵文字は使いませんな😀ｗｗｗ",
-            messages: ["純粋なロジカル語法では絵文字を使用しません。"]
+            messages: ["Ronjaチャットでは絵文字を使用しません。"]
         },
         {
             text: "最小値を変更しますなｗｗｗ",
@@ -122,11 +122,11 @@ test("reports mechanically detectable style violations", async () => {
         },
         {
             text: "旗も使いませんな🇯🇵ｗｗｗ",
-            messages: ["純粋なロジカル語法では絵文字を使用しません。"]
+            messages: ["Ronjaチャットでは絵文字を使用しません。"]
         },
         {
             text: "キーキャップも使いませんな1️⃣ｗｗｗ",
-            messages: ["純粋なロジカル語法では絵文字を使用しません。"]
+            messages: ["Ronjaチャットでは絵文字を使用しません。"]
         },
         {
             text: "私はこの設定を採用しますなｗｗｗ",
@@ -152,11 +152,26 @@ test("does not treat a plain URL as grass", async () => {
     );
 });
 
-test("places punctuation before grass by default", async () => {
+test("uses the Ronja chat punctuation policy by default", async () => {
     assert.deepEqual(await lintMessages("いかがですかな？ｗｗｗ"), []);
     assert.deepEqual(
         await lintMessages("いかがですかなｗｗｗ？"),
         ["疑問符と感嘆符は芝の前に置いてください。"]
+    );
+});
+
+test("the current canonical profile accepts punctuation on either side", async () => {
+    assert.deepEqual(
+        await lintMessages("いかがですかな？ｗｗｗ", {
+            profile: "canonical-current"
+        }),
+        []
+    );
+    assert.deepEqual(
+        await lintMessages("いかがですかなｗｗｗ？", {
+            profile: "canonical-current"
+        }),
+        []
     );
 });
 
@@ -216,7 +231,12 @@ test("accepts representative Logical Gohou construction families", async () => {
     ].join("\n");
 
     assert.deepEqual(await lintMessages(text), []);
-    assert.deepEqual(await lintMessages("根拠のない断定は役割を持てないゴミ"), []);
+    assert.deepEqual(
+        await lintMessages("根拠のない断定は役割を持てないゴミ", {
+            allowBareGomiEnding: true
+        }),
+        []
+    );
 });
 
 test("accepts repeated basic endings used in the original style", async () => {
@@ -230,9 +250,13 @@ test("accepts repeated basic endings used in the original style", async () => {
     assert.deepEqual(await lintMessages(text), []);
 });
 
-test("requires every line in a prose paragraph to end logically", async () => {
-    assert.deepEqual(await lintMessages("これは通常の説明文\n結論ですぞｗｗｗ"), [
-        "通常の本文の各行を全角小文字の「ｗ」3個以上で終えてください。"
+test("treats a Markdown soft break as part of the same utterance", async () => {
+    assert.deepEqual(await lintMessages("我の結論では、この設定は\n妥当ですなｗｗｗ"), []);
+});
+
+test("checks each side of an explicit Markdown hard break", async () => {
+    assert.deepEqual(await lintMessages("説明ですなｗｗｗ  \nこれは通常の説明です"), [
+        "通常の本文の各発話を全角小文字の「ｗ」3個以上で終えてください。"
     ]);
 });
 
@@ -253,6 +277,34 @@ test("does not require logical endings in Markdown structure or ignored content"
     assert.deepEqual(await lintMessages(text), []);
 });
 
+test("checks prose in list items while allowing compact labels", async () => {
+    assert.deepEqual(await lintMessages("- この案を採用します"), [
+        "通常の本文の各発話を全角小文字の「ｗ」3個以上で終えてください。"
+    ]);
+    assert.deepEqual(await lintMessages("- この案を採用しますぞｗｗｗ"), []);
+    assert.deepEqual(await lintMessages("- 状態: 完了"), []);
+    assert.deepEqual(await lintMessages("- 状態: `done`"), []);
+});
+
+test("protects inline quotations from style checks", async () => {
+    assert.deepEqual(await lintMessages("引用すると「私はそう思います。」ですなｗｗｗ"), []);
+    assert.deepEqual(await lintMessages("「あなたはどうしますか？」への回答ですぞｗｗｗ"), []);
+    assert.deepEqual(await lintMessages("“私は通常の文章です。”と記録されていますなｗｗｗ"), []);
+});
+
+test("does not protect text outside inline quotations", async () => {
+    assert.deepEqual(await lintMessages("「引用です。」私は賛成ですなｗｗｗ"), [
+        "一人称には「我」を使ってください。"
+    ]);
+});
+
+test("protects plain URLs with query strings", async () => {
+    assert.deepEqual(
+        await lintMessages("https://example.com/search?q=test を確認しましたぞｗｗｗ"),
+        []
+    );
+});
+
 test("allows disabling only the final-grass requirement", async () => {
     assert.deepEqual(
         await lintMessages("途中に句点があります。", {
@@ -262,7 +314,7 @@ test("allows disabling only the final-grass requirement", async () => {
     );
 });
 
-test("keeps acceptedEndings as an optional strict restriction", async () => {
+test("keeps acceptedEndings as an optional custom restriction", async () => {
     assert.deepEqual(
         await lintMessages("自由な語尾ですなｗｗｗ", {
             acceptedEndings: ["ですぞ"]
@@ -277,9 +329,55 @@ test("keeps acceptedEndings as an optional strict restriction", async () => {
     );
     assert.deepEqual(
         await lintMessages("根拠のない断定は役割を持てないゴミ", {
-            acceptedEndings: ["ですぞ"]
+            acceptedEndings: ["ですぞ"],
+            allowBareGomiEnding: true
         }),
         ["通常の本文を指定されたロジカル語尾と3個以上の芝で終えてください。"]
+    );
+});
+
+test("requires explicit opt-in for the semantic bare-gomi exception", async () => {
+    assert.deepEqual(await lintMessages("この人はゴミ"), [
+        "通常の本文の各発話を全角小文字の「ｗ」3個以上で終えてください。"
+    ]);
+    assert.deepEqual(
+        await lintMessages("○○確1のゴミ", {
+            allowBareGomiEnding: true
+        }),
+        []
+    );
+});
+
+test("separates canonical rules from Ronja chat policy", async () => {
+    assert.deepEqual(
+        await lintMessages("性別記号はヤブ♀️の一部ですなｗｗｗ", {
+            profile: "canonical-current"
+        }),
+        []
+    );
+    assert.deepEqual(await lintMessages("性別記号はヤブ♀️の一部ですなｗｗｗ"), [
+        "Ronjaチャットでは絵文字を使用しません。"
+    ]);
+});
+
+test("allows noncanonical grass lengths only in the custom profile", async () => {
+    await assert.rejects(
+        lintMessages("確認しますぞｗｗ", { minGrass: 2 }),
+        /minGrass must be at least 3 for the ronja-chat profile/u
+    );
+    await assert.rejects(
+        lintMessages("確認しますぞｗｗ", {
+            minGrass: 2,
+            profile: "canonical-current"
+        }),
+        /minGrass must be at least 3 for the canonical-current profile/u
+    );
+    assert.deepEqual(
+        await lintMessages("確認しますぞｗｗ", {
+            minGrass: 2,
+            profile: "custom"
+        }),
+        []
     );
 });
 
@@ -317,6 +415,12 @@ test("rejects invalid options", async () => {
         } as unknown as Options),
         /punctuationPosition must be one of: before, after, either/u
     );
+    await assert.rejects(
+        lintMessages("確認しますぞｗｗｗ", {
+            profile: "future"
+        } as unknown as Options),
+        /profile must be one of: ronja-chat, canonical-current, custom/u
+    );
 });
 
 test("keeps the distributed examples in sync with the rule", async () => {
@@ -328,7 +432,7 @@ test("keeps the distributed examples in sync with the rule", async () => {
     const invalidMessages = await lintMessages(invalidExample);
     const expectedMessages = [
         "一人称には「我」を使ってください。",
-        "純粋なロジカル語法では絵文字を使用しません。",
+        "Ronjaチャットでは絵文字を使用しません。",
         "芝には全角小文字の「ｗ」だけを使ってください。",
         "芝には全角小文字の「ｗ」だけを使ってください。",
         "ロジカル語法では句点を使わず、芝で文を区切ってください。",

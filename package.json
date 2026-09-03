@@ -1,7 +1,7 @@
 {
   "name": "textlint-rule-ronjalint",
   "version": "0.1.0",
-  "description": "RonjaLint: a textlint rule for validating Japanese Logical Gohou chat style.",
+  "description": "A textlint rule and AI agent style pack for Japanese Logical Gohou.",
   "keywords": [
     "textlint",
     "textlintrule",
@@ -11,18 +11,26 @@
   "license": "MIT",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "bin": {
+    "ronjalint-agent": "./scripts/install-agent.mjs"
+  },
   "files": [
     ".agents/hooks/",
-    "lib/",
     ".agents/skills/ronjalint/",
     ".codex/hooks.json",
+    "examples/",
+    "grammar/",
+    "lib/",
     "README.md",
+    "scripts/",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "npm run build && tsx --test test/index-test.ts && node --test test/hook-test.mjs",
-    "prepare": "npm run build"
+    "generate": "node scripts/generate.mjs",
+    "generate:check": "node scripts/generate.mjs --check",
+    "test": "npm run generate:check && npm run build && tsx --test test/index-test.ts && node --test test/hook-test.mjs test/spec-test.mjs test/install-test.mjs",
+    "prepare": "npm run generate:check && npm run build"
   },
   "engines": {
     "node": ">=20"

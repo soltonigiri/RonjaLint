@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hookPath = resolve(repoRoot, ".agents/hooks/ronjalint.mjs");
+const guidancePath = resolve(
+    repoRoot,
+    ".agents/skills/ronjalint/references/agent-guidance.json"
+);
 
 const runHook = (event) => {
     const result = spawnSync(process.execPath, [hookPath], {
@@ -28,23 +32,18 @@ test("hook configuration enables SessionStart and Stop", () => {
 
 test("SessionStart adds the always-on style instructions", () => {
     const output = runHook({ hook_event_name: "SessionStart", source: "startup" });
+    const guidance = JSON.parse(readFileSync(guidancePath, "utf8"));
+    const context = output.hookSpecificOutput.additionalContext;
 
     assert.equal(output.hookSpecificOutput.hookEventName, "SessionStart");
-    assert.match(output.hookSpecificOutput.additionalContext, /RonjaLint/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /役割論理/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /絵文字は使わない/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /基本語尾の反復自体は誤りではない/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /一律に付けるだけで済ませない/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /んんｗｗｗ/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /ぺゃっｗｗｗ.*嘲笑/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /以外ありえないｗｗｗ/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /役割を持て/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /総合的にロジックして/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /n秒でわかることだｗｗｗ/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /nは通常2〜5/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /技術語を即興で変形しない/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /ヤロジック.*総称として使わない/u);
-    assert.match(output.hookSpecificOutput.additionalContext, /疑問符と感嘆符は芝の直前/u);
+    assert.equal(context.startsWith(guidance.intro), true);
+    for (const instruction of [
+        ...guidance.workflow,
+        ...guidance.scope,
+        ...guidance.instructions.map((item) => item.instruction)
+    ]) {
+        assert.equal(context.includes(instruction), true, instruction);
+    }
 });
 
 test("Stop accepts a valid response", () => {
@@ -81,15 +80,34 @@ test("Stop accepts canonical repetition of basic endings", () => {
     }), {});
 });
 
-test("Stop continues a response with an unmarked prose line", () => {
+test("Stop continues a response with an unmarked hard-break utterance", () => {
     const output = runHook({
         hook_event_name: "Stop",
         stop_hook_active: false,
-        last_assistant_message: "これは通常の説明文\n結論ですぞｗｗｗ"
+        last_assistant_message: "これは通常の説明文  \n結論ですぞｗｗｗ"
     });
 
     assert.equal(output.decision, "block");
-    assert.match(output.reason, /通常の本文の各行/u);
+    assert.match(output.reason, /通常の本文の各発話/u);
+});
+
+test("Stop accepts a soft-wrapped utterance", () => {
+    assert.deepEqual(runHook({
+        hook_event_name: "Stop",
+        stop_hook_active: false,
+        last_assistant_message: "我の結論では、この設定は\n妥当ですなｗｗｗ"
+    }), {});
+});
+
+test("Stop checks prose list items", () => {
+    const output = runHook({
+        hook_event_name: "Stop",
+        stop_hook_active: false,
+        last_assistant_message: "- この案を採用します"
+    });
+
+    assert.equal(output.decision, "block");
+    assert.match(output.reason, /通常の本文の各発話/u);
 });
 
 test("Stop does not continue twice", () => {
