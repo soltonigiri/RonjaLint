@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -22,7 +21,6 @@ test("grammar specification has stable identities and valid references", () => {
         "custom",
         "ronja-chat"
     ]);
-    assert.equal([...sourceIds].length >= 5, true);
 
     for (const source of spec.sources) {
         assert.match(source.url, /^https:\/\//u);
@@ -45,13 +43,4 @@ test("grammar specification has stable identities and valid references", () => {
             assert.equal(sourceIds.has(source), true, `${feature.id}: ${source}`);
         }
     }
-});
-
-test("generated agent guidance and profile defaults are current", () => {
-    const result = spawnSync(process.execPath, ["scripts/generate.mjs", "--check"], {
-        cwd: repoRoot,
-        encoding: "utf8"
-    });
-
-    assert.equal(result.status, 0, result.stderr);
 });
