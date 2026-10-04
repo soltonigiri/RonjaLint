@@ -1,6 +1,6 @@
 # RonjaLint
 
-RonjaLintは、いわゆる「役割論理」のロジカル語法をAIの日本語チャットに取り入れるツールです。textlintルールのほか、AIエージェント向けのSkill・Hooksも入っています。
+「役割論理」のロジカル語法を検査するtextlintルールです。AIの日本語チャットに適用するSkill・Hooksも提供します。
 
 ## Before / After
 
@@ -16,7 +16,7 @@ RonjaLintは、いわゆる「役割論理」のロジカル語法をAIの日本
 npm install --save-dev textlint github:soltonigiri/RonjaLint
 ```
 
-`.textlintrc.json`:
+`.textlintrc.json`にルールを追加します。
 
 ```json
 {

@@ -112,16 +112,8 @@ const maskPairedQuotes = (text: string): string => {
         .reduce((masked, range) => maskRange(masked, range.start, range.end), text);
 };
 
-const maskPlainUrls = (text: string): string => {
-    const ranges = [...text.matchAll(/https?:\/\/[^\s<>"'）】」』]+/gu)].map((match) => ({
-        start: match.index ?? 0,
-        end: (match.index ?? 0) + match[0].length
-    }));
-
-    return [...ranges]
-        .sort((left, right) => right.start - left.start)
-        .reduce((masked, range) => maskRange(masked, range.start, range.end), text);
-};
+const maskPlainUrls = (text: string): string =>
+    text.replace(/https?:\/\/[^\s<>"'）】」』]+/gu, (url) => " ".repeat(url.length));
 
 const maskExcludedInlineText = (text: string, protectInlineQuotes: boolean): string =>
     maskPlainUrls(protectInlineQuotes ? maskPairedQuotes(text) : text);
